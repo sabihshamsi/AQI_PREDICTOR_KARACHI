@@ -80,3 +80,8 @@ def predict_latest():
 def history(limit: int = 30):
     df = read_features().sort_values("date").tail(limit)
     return df.to_dict(orient="records")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

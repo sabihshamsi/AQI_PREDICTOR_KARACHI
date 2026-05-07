@@ -1,0 +1,33 @@
+name: Training Pipeline
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Train and register model
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME }}
+          FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION }}
+          FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY }}
+          TARGET_COLUMN: ${{ secrets.TARGET_COLUMN }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME }}
+          MODEL_VERSION: ${{ secrets.MODEL_VERSION }}
+        run: python scripts/train_model.py

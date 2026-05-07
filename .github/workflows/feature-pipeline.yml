@@ -1,0 +1,34 @@
+name: Feature Pipeline
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  backfill-features:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run feature script (last 3 days window)
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME }}
+          FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION }}
+          FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY }}
+          TARGET_COLUMN: ${{ secrets.TARGET_COLUMN }}
+        run: |
+          START_DATE=$(date -u -d "3 days ago" +%F)
+          END_DATE=$(date -u +%F)
+          python scripts/backfill_features.py --start-date "$START_DATE" --end-date "$END_DATE"

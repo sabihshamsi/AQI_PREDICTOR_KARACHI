@@ -5,6 +5,7 @@ from typing import Any
 
 import hopsworks
 import pandas as pd
+from hopsworks_common.client.exceptions import ModelRegistryException
 
 from src.config import settings, validate_settings
 
@@ -43,12 +44,29 @@ def read_features() -> pd.DataFrame:
     return fg.read()
 
 
+def resolve_model_version(mr, model_name: str, preferred_version: int) -> int:
+    version = preferred_version
+    while True:
+        try:
+            mr.get_model(model_name, version=version)
+            version += 1
+        except ModelRegistryException:
+            return version
+
+
 def register_model_artifact(model_dir: Path, metrics: dict[str, float], model_type: str) -> Any:
     project = login_to_hopsworks()
     mr = project.get_model_registry()
+    model_version = resolve_model_version(mr, settings.model_name, settings.model_version)
+
+    if model_version != settings.model_version:
+        print(
+            f"Model version {settings.model_version} already exists, registering as version {model_version} instead."
+        )
+
     py_model = mr.python.create_model(
         name=settings.model_name,
-        version=settings.model_version,
+        version=model_version,
         description="Best AQI model for Karachi trained from Feature Store data",
         metrics=metrics,
     )

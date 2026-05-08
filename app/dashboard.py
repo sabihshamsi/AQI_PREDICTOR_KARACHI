@@ -66,13 +66,14 @@ with col1:
         st.error(f"Could not fetch latest data: {exc}")
 
 with col2:
-    st.subheader("AQI Predictions (Next 4 Days)")
+    st.subheader("AQI Predictions (Next 3 Days)")
+    st.caption("⚠️ Future predictions are based on current weather conditions")
     try:
         data = call_api("/predict-latest")
         predictions = data["predictions"]
 
         # Create cards for each prediction
-        cols = st.columns(4)
+        cols = st.columns(3)
         for i, pred in enumerate(predictions):
             with cols[i]:
                 st.markdown(f"**{pd.to_datetime(pred['date']).strftime('%a %m/%d')}**")

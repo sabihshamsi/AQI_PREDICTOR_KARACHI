@@ -2,18 +2,56 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Add parent directory to path so we can import src
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import joblib
+import numpy as np
+import pandas as pd
 from fastapi import FastAPI
 
 from src.config import settings
 from src.hopsworks_utils import login_to_hopsworks, read_features
 
 app = FastAPI(title="Karachi AQI Prediction API")
+
+
+def calculate_aqi(pm25: float) -> dict:
+    """Calculate AQI from PM2.5 using EPA formula"""
+    if pm25 <= 12.0:
+        aqi = (50 / 12.0) * pm25
+        category = "Good"
+        color = "#00e400"
+    elif pm25 <= 35.4:
+        aqi = ((100 - 51) / (35.4 - 12.1)) * (pm25 - 12.1) + 51
+        category = "Moderate"
+        color = "#ffff00"
+    elif pm25 <= 55.4:
+        aqi = ((150 - 101) / (55.4 - 35.5)) * (pm25 - 35.5) + 101
+        category = "Unhealthy for Sensitive Groups"
+        color = "#ff7e00"
+    elif pm25 <= 150.4:
+        aqi = ((200 - 151) / (150.4 - 55.5)) * (pm25 - 55.5) + 151
+        category = "Unhealthy"
+        color = "#ff0000"
+    elif pm25 <= 250.4:
+        aqi = ((300 - 201) / (250.4 - 150.5)) * (pm25 - 150.5) + 201
+        category = "Very Unhealthy"
+        color = "#8f3f97"
+    else:
+        aqi = ((500 - 301) / (500.4 - 250.5)) * (pm25 - 250.5) + 301
+        category = "Hazardous"
+        color = "#7e0023"
+
+    return {
+        "aqi": round(aqi),
+        "category": category,
+        "color": color,
+        "pm25": round(pm25, 2)
+    }
 
 
 def load_latest_registered_model():
@@ -26,37 +64,30 @@ def load_latest_registered_model():
     return payload
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+def predict_for_date(model_payload, target_date: datetime, latest_features: pd.DataFrame):
+    """Predict PM2.5 for a specific date using latest available features"""
+    framework = model_payload.get("framework", "sklearn")
+    feature_cols = model_payload["features"]
 
+    # Use the most recent features as proxy for future predictions
+    # In a real system, you'd have weather forecasts for future dates
+    X = latest_features[feature_cols].iloc[-1:].copy()
 
-@app.get("/predict-latest")
-def predict_latest():
-    payload = load_latest_registered_model()
-    framework = payload.get("framework", "sklearn")
-    feature_cols = payload["features"]
-    model_name = payload["model_name"]
-    df = read_features().sort_values("date")
-    latest = df.iloc[-1:]
-    X = latest[feature_cols]
     if framework == "sklearn":
-        model = payload["model"]
+        model = model_payload["model"]
         pred = float(model.predict(X)[0])
     elif framework == "tensorflow":
         import tensorflow as tf
-
-        model = tf.keras.models.load_model(payload["model_path"])
-        transformed = payload["scaler"].transform(payload["imputer"].transform(X))
+        model = tf.keras.models.load_model(model_payload["model_path"])
+        transformed = model_payload["scaler"].transform(model_payload["imputer"].transform(X))
         pred = float(model.predict(transformed, verbose=0).ravel()[0])
     elif framework == "pytorch":
-        import numpy as np
         import torch
         import torch.nn as nn
 
-        transformed = payload["scaler"].transform(payload["imputer"].transform(X))
+        transformed = model_payload["scaler"].transform(model_payload["imputer"].transform(X))
         transformed = transformed.astype(np.float32)
-        state_path = payload["model_state_path"]
+        state_path = model_payload["model_state_path"]
 
         model = nn.Sequential(
             nn.Linear(transformed.shape[1], 128),
@@ -70,20 +101,77 @@ def predict_latest():
         with torch.no_grad():
             pred = float(model(torch.from_numpy(transformed)).numpy().ravel()[0])
     else:
-        raise ValueError(f"Unsupported framework in registry payload: {framework}")
+        raise ValueError(f"Unsupported framework: {framework}")
+
+    return pred
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/predict-latest")
+def predict_latest():
+    payload = load_latest_registered_model()
+    model_name = payload["model_name"]
+
+    # Get latest features
+    df = read_features().sort_values("date")
+    latest = df.iloc[-1:]
+
+    # Predict for today and next 3 days
+    today = datetime.now().date()
+    predictions = []
+
+    for days_ahead in range(4):  # Today + 3 days
+        pred_date = today + timedelta(days=days_ahead)
+        pm25_pred = predict_for_date(payload, pred_date, latest)
+        aqi_info = calculate_aqi(pm25_pred)
+
+        predictions.append({
+            "date": str(pred_date),
+            "pm25": aqi_info["pm25"],
+            "aqi": aqi_info["aqi"],
+            "category": aqi_info["category"],
+            "color": aqi_info["color"]
+        })
+
+    # Get actual latest PM2.5 for comparison
+    latest_actual = float(latest[settings.target_column].iloc[0])
+    latest_aqi = calculate_aqi(latest_actual)
 
     return {
         "model_name": model_name,
-        "date": str(latest["date"].iloc[0]),
-        "prediction_pm2_5": pred,
-        "latest_actual_pm2_5": float(latest[settings.target_column].iloc[0]),
+        "predictions": predictions,
+        "latest_actual": {
+            "date": str(latest["date"].iloc[0]),
+            "pm25": latest_aqi["pm25"],
+            "aqi": latest_aqi["aqi"],
+            "category": latest_aqi["category"],
+            "color": latest_aqi["color"]
+        }
     }
 
 
 @app.get("/history")
 def history(limit: int = 30):
     df = read_features().sort_values("date").tail(limit)
-    return df.to_dict(orient="records")
+
+    # Add AQI calculations to historical data
+    history_data = []
+    for _, row in df.iterrows():
+        pm25 = float(row[settings.target_column])
+        aqi_info = calculate_aqi(pm25)
+        history_data.append({
+            "date": str(row["date"]),
+            "pm25": aqi_info["pm25"],
+            "aqi": aqi_info["aqi"],
+            "category": aqi_info["category"],
+            "color": aqi_info["color"]
+        })
+
+    return history_data
 
 
 if __name__ == "__main__":

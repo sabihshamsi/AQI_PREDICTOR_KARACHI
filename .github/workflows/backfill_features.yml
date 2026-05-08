@@ -27,10 +27,10 @@ jobs:
       env:
         HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
         HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
-        FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME }}
-        FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION }}
-        FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY }}
-        TARGET_COLUMN: ${{ secrets.TARGET_COLUMN }}
+        FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME || 'karachi_aqi_features' }}
+        FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '1' }}
+        FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY || 'date' }}
+        TARGET_COLUMN: ${{ secrets.TARGET_COLUMN || 'pm2_5' }}
       run: |
         # Run for the last 7 days to catch up
         START_DATE=$(date -d '7 days ago' +%Y-%m-%d)

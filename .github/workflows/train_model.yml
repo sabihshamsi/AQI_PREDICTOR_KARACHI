@@ -27,4 +27,10 @@ jobs:
       env:
         HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
         HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+        FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME }}
+        FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION }}
+        FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY }}
+        TARGET_COLUMN: ${{ secrets.TARGET_COLUMN }}
+        MODEL_NAME: ${{ secrets.MODEL_NAME }}
+        MODEL_VERSION: ${{ secrets.MODEL_VERSION }}
       run: python scripts/train_model.py

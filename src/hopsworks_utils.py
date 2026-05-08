@@ -44,20 +44,16 @@ def read_features() -> pd.DataFrame:
     return fg.read()
 
 
-def resolve_model_version(mr, model_name: str, preferred_version: int) -> int:
-    version = preferred_version
-    while True:
-        try:
-            mr.get_model(model_name, version=version)
-            version += 1
-        except ModelRegistryException:
-            return version
-
-
 def register_model_artifact(model_dir: Path, metrics: dict[str, float], model_type: str) -> Any:
     project = login_to_hopsworks()
     mr = project.get_model_registry()
-    model_version = resolve_model_version(mr, settings.model_name, settings.model_version)
+    models = mr.get_models(settings.model_name)
+
+    if models:
+        latest_version = max(m.version for m in models)
+        model_version = latest_version + 1
+    else:
+        model_version = 1
 
     if model_version != settings.model_version:
         print(

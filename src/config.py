@@ -11,7 +11,7 @@ class Settings:
     hopsworks_api_key: str = os.getenv("HOPSWORKS_API_KEY", "")
     hopsworks_project: str = os.getenv("HOPSWORKS_PROJECT", "")
     feature_group_name: str = os.getenv("FEATURE_GROUP_NAME", "karachi_aqi_features")
-    feature_group_version: int = int(os.getenv("FEATURE_GROUP_VERSION") or "1")
+    feature_group_version: int = int(os.getenv("FEATURE_GROUP_VERSION") or "2")
     feature_group_primary_key: str = os.getenv("FEATURE_GROUP_PRIMARY_KEY", "date")
     target_column: str = os.getenv("TARGET_COLUMN", "pm2_5")
     model_name: str = os.getenv("MODEL_NAME", "karachi_aqi_model")

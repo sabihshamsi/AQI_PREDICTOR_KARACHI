@@ -10,8 +10,19 @@ from hopsworks_common.client.exceptions import ModelRegistryException
 from src.config import settings, validate_settings
 
 
+def _disable_model_serving_bootstrap() -> None:
+    """Skip optional serving setup that is not needed by this app."""
+    try:
+        from hsml.core import model_serving_api
+    except Exception:
+        return
+
+    model_serving_api.ModelServingApi.load_default_configuration = lambda self: None
+
+
 def login_to_hopsworks():
     validate_settings()
+    _disable_model_serving_bootstrap()
     return hopsworks.login(
         api_key_value=settings.hopsworks_api_key,
         project=settings.hopsworks_project,

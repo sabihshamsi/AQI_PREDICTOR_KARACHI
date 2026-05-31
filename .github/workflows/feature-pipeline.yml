@@ -1,13 +1,21 @@
-name: Feature Pipeline
+name: Hourly AQI Feature Sync
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 * * * *"  # Every hour — feature sync only
   workflow_dispatch:
 
 jobs:
-  backfill-features:
+  sync-features:
     runs-on: ubuntu-latest
+    env:
+      HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+      HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+      FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME || 'karachi_aqi_features' }}
+      FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '2' }}
+      FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY || 'date' }}
+      TARGET_COLUMN: ${{ secrets.TARGET_COLUMN || 'pm2_5' }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -18,17 +26,19 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run feature script (last 3 days window)
-        env:
-          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
-          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
-          FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME }}
-          FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION }}
-          FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY }}
-          TARGET_COLUMN: ${{ secrets.TARGET_COLUMN }}
         run: |
-          START_DATE=$(date -u -d "3 days ago" +%F)
-          END_DATE=$(date -u +%F)
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Display scheduled run info
+        run: |
+          echo "RUNNING FEATURE PIPELINE (hourly sync only)"
+          echo "START_DATE=$(TZ=Asia/Karachi date -d '3 days ago' +%F)"
+          echo "END_DATE=$(TZ=Asia/Karachi date +%F)"
+          date -u
+
+      - name: Backfill latest Karachi AQI window
+        run: |
+          START_DATE=$(TZ=Asia/Karachi date -d "3 days ago" +%F)
+          END_DATE=$(TZ=Asia/Karachi date +%F)
           python scripts/backfill_features.py --start-date "$START_DATE" --end-date "$END_DATE"

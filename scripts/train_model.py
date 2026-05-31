@@ -5,14 +5,13 @@ import sys
 
 import joblib
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -23,6 +22,7 @@ from src.hopsworks_utils import read_features, register_model_artifact
 
 
 def build_models() -> dict[str, Pipeline]:
+    """Three Scikit-learn models: linear baseline, ensemble, and MLP."""
     return {
         "ridge": Pipeline(
             [
@@ -36,12 +36,11 @@ def build_models() -> dict[str, Pipeline]:
                 (
                     "model",
                     RandomForestRegressor(
-                        n_estimators=300, max_depth=16, random_state=42, n_jobs=-1
+                        n_estimators=300, max_depth=16, random_state=42, n_jobs=1
                     ),
                 ),
             ]
         ),
-        # Advanced baseline neural model from sklearn (fast and easy to deploy).
         "mlp": Pipeline(
             [
                 ("imputer", SimpleImputer(strategy="median")),
@@ -67,63 +66,94 @@ def evaluate(y_true, y_pred) -> dict[str, float]:
     return {"rmse": rmse, "mae": mae, "r2": r2}
 
 
-def run_tensorflow(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray):
-    try:
-        import tensorflow as tf
-    except Exception as exc:
-        print(f"Skipping tensorflow model: {exc}")
-        return None, None
+def add_lag_features(train_df: pd.DataFrame, test_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Compute lag and rolling features AFTER the train/test split to prevent
+    data leakage. Test lag features are computed using only the tail of the
+    training set as history — never from future test rows.
 
-    tf.random.set_seed(42)
-    model = tf.keras.Sequential(
-        [
-            tf.keras.layers.Input(shape=(X_train.shape[1],)),
-            tf.keras.layers.Dense(128, activation="relu"),
-            tf.keras.layers.Dense(64, activation="relu"),
-            tf.keras.layers.Dense(1),
-        ]
+    Returns updated (train_df, test_df) with lag columns added.
+    """
+    lag_cols = ["pm2_5_lag_1d", "pm2_5_change_1d", "pm2_5_pct_change_1d",
+                "pm2_5_rolling_mean_3d", "pm10_lag_1d", "pm10_change_1d"]
+
+    # Drop any pre-computed lag columns that arrived from the feature store
+    # (they were computed on the full dataset and are therefore leaky).
+    train_df = train_df.drop(columns=[c for c in lag_cols if c in train_df.columns])
+    test_df = test_df.drop(columns=[c for c in lag_cols if c in test_df.columns])
+
+    # --- Training lag features (safe: only uses training history) ---
+    if "pm2_5" in train_df.columns:
+        train_df = train_df.copy()
+        train_df["pm2_5_lag_1d"] = train_df["pm2_5"].shift(1)
+        train_df["pm2_5_change_1d"] = train_df["pm2_5"].diff()
+        train_df["pm2_5_pct_change_1d"] = train_df["pm2_5"].pct_change()
+        train_df["pm2_5_rolling_mean_3d"] = (
+            train_df["pm2_5"].rolling(window=3, min_periods=1).mean()
+        )
+    if "pm10" in train_df.columns:
+        train_df["pm10_lag_1d"] = train_df["pm10"].shift(1)
+        train_df["pm10_change_1d"] = train_df["pm10"].diff()
+
+    # --- Test lag features (safe: seed the rolling window from tail of train) ---
+    # We prepend the last 3 training rows as context, compute features on the
+    # combined block, then strip the context rows back off.
+    context_rows = 3
+    context = train_df.tail(context_rows).copy()
+    combined = pd.concat([context, test_df.copy()], ignore_index=True)
+
+    if "pm2_5" in combined.columns:
+        combined["pm2_5_lag_1d"] = combined["pm2_5"].shift(1)
+        combined["pm2_5_change_1d"] = combined["pm2_5"].diff()
+        combined["pm2_5_pct_change_1d"] = combined["pm2_5"].pct_change()
+        combined["pm2_5_rolling_mean_3d"] = (
+            combined["pm2_5"].rolling(window=3, min_periods=1).mean()
+        )
+    if "pm10" in combined.columns:
+        combined["pm10_lag_1d"] = combined["pm10"].shift(1)
+        combined["pm10_change_1d"] = combined["pm10"].diff()
+
+    test_df = combined.iloc[context_rows:].reset_index(drop=True)
+
+    return (
+        train_df.replace([float("inf"), -float("inf")], pd.NA),
+        test_df.replace([float("inf"), -float("inf")], pd.NA),
     )
-    model.compile(optimizer="adam", loss="mse")
-    model.fit(X_train, y_train, epochs=100, batch_size=16, verbose=0)
-    preds = model.predict(X_test, verbose=0).ravel()
-    return model, preds
 
 
-def run_pytorch(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray):
-    try:
-        import torch
-        import torch.nn as nn
-    except Exception as exc:
-        print(f"Skipping pytorch model: {exc}")
-        return None, None
+def chronological_split(
+    df: pd.DataFrame,
+    target_col: str,
+    horizon: int,
+    test_size: float = 0.2,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """
+    Chronological train/test split with a gap equal to the forecast horizon
+    to prevent boundary leakage between the horizon-shifted target and the
+    lag features on either side of the split boundary.
+    """
+    df = df.copy()
+    df["_target"] = df[target_col].shift(-horizon)
+    df = df.dropna(subset=["_target"])
 
-    torch.manual_seed(42)
-    x_train_t = torch.tensor(X_train, dtype=torch.float32)
-    y_train_t = torch.tensor(y_train.reshape(-1, 1), dtype=torch.float32)
-    x_test_t = torch.tensor(X_test, dtype=torch.float32)
+    n = len(df)
+    test_n = max(1, int(n * test_size))
+    gap = horizon  # rows to drop at the boundary
 
-    model = nn.Sequential(
-        nn.Linear(X_train.shape[1], 128),
-        nn.ReLU(),
-        nn.Linear(128, 64),
-        nn.ReLU(),
-        nn.Linear(64, 1),
-    )
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    criterion = nn.MSELoss()
+    train_end = n - test_n - gap
+    if train_end < 1:
+        raise ValueError(
+            f"Not enough data for horizon={horizon} with test_size={test_size}. "
+            f"Have {n} rows after dropping NaN targets."
+        )
 
-    model.train()
-    for _ in range(200):
-        optimizer.zero_grad()
-        out = model(x_train_t)
-        loss = criterion(out, y_train_t)
-        loss.backward()
-        optimizer.step()
+    train = df.iloc[:train_end].copy()
+    test = df.iloc[train_end + gap:].copy()
 
-    model.eval()
-    with torch.no_grad():
-        preds = model(x_test_t).numpy().ravel()
-    return model, preds
+    y_train = train.pop("_target")
+    y_test = test.pop("_target")
+
+    return train, test, y_train, y_test
 
 
 def main() -> None:
@@ -131,110 +161,93 @@ def main() -> None:
     if settings.target_column not in df.columns:
         raise ValueError(f"Target column '{settings.target_column}' not found in feature store")
 
-    df = df.sort_values("date")
-    feature_cols = [c for c in df.columns if c not in {"date", settings.target_column}]
-    X = df[feature_cols]
-    y = df[settings.target_column]
+    df = df.sort_values("date").reset_index(drop=True)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, shuffle=False
-    )
-    y_train_np = y_train.to_numpy()
-    y_test_np = y_test.to_numpy()
+    # Base feature columns (excluding date and the raw target).
+    # Lag columns will be recomputed leak-free inside the loop.
+    lag_cols = {"pm2_5_lag_1d", "pm2_5_change_1d", "pm2_5_pct_change_1d",
+                "pm2_5_rolling_mean_3d", "pm10_lag_1d", "pm10_change_1d"}
+    base_feature_cols = [
+        c for c in df.columns
+        if c not in {"date", settings.target_column} and c not in lag_cols
+    ]
 
-    best_name = ""
-    best_metrics = {"rmse": float("inf"), "mae": float("inf"), "r2": -float("inf")}
-    best_model = None
+    horizon_models: dict = {}
+    horizon_metrics: dict = {}
 
-    for model_name, model in build_models().items():
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
-        metrics = evaluate(y_test_np, preds)
-        print(f"{model_name}: {metrics}")
+    for horizon in (1, 2, 3):
+        print(f"\n=== Training horizon {horizon} day(s) ahead ===")
 
-        if metrics["rmse"] < best_metrics["rmse"]:
-            best_name = model_name
-            best_metrics = metrics
-            best_model = model
+        # Chronological split with gap — no leakage at boundary
+        train_df, test_df, y_train, y_test = chronological_split(
+            df, settings.target_column, horizon=horizon
+        )
 
-    # Standardized arrays for deep-learning candidates.
-    imputer = SimpleImputer(strategy="median")
-    scaler = StandardScaler()
-    X_train_arr = scaler.fit_transform(imputer.fit_transform(X_train))
-    X_test_arr = scaler.transform(imputer.transform(X_test))
+        # Compute lag features after splitting — no leakage from future rows
+        train_df, test_df = add_lag_features(train_df, test_df)
 
-    tf_model, tf_preds = run_tensorflow(X_train_arr, y_train_np, X_test_arr)
-    if tf_model is not None:
-        tf_metrics = evaluate(y_test_np, tf_preds)
-        print(f"tensorflow_dense: {tf_metrics}")
-        if tf_metrics["rmse"] < best_metrics["rmse"]:
-            best_name = "tensorflow_dense"
-            best_metrics = tf_metrics
-            best_model = {"framework": "tensorflow", "model": tf_model, "imputer": imputer, "scaler": scaler}
+        # Final feature columns (base + leak-free lag columns)
+        feature_cols = [
+            c for c in base_feature_cols + list(lag_cols)
+            if c in train_df.columns and c in test_df.columns
+            and c not in {"date", settings.target_column}
+        ]
 
-    torch_model, torch_preds = run_pytorch(X_train_arr, y_train_np, X_test_arr)
-    if torch_model is not None:
-        torch_metrics = evaluate(y_test_np, torch_preds)
-        print(f"pytorch_mlp: {torch_metrics}")
-        if torch_metrics["rmse"] < best_metrics["rmse"]:
-            best_name = "pytorch_mlp"
-            best_metrics = torch_metrics
-            best_model = {"framework": "pytorch", "model": torch_model, "imputer": imputer, "scaler": scaler}
+        X_train = train_df[feature_cols]
+        X_test = test_df[feature_cols]
+        y_test_np = y_test.to_numpy()
 
-    if best_model is None:
-        raise RuntimeError("No model was successfully trained.")
+        best_name = ""
+        best_metrics: dict = {"rmse": float("inf"), "mae": float("inf"), "r2": -float("inf")}
+        best_model = None
 
+        for model_name, model in build_models().items():
+            model.fit(X_train, y_train)
+            preds = model.predict(X_test)
+            metrics = evaluate(y_test_np, preds)
+            print(f"  horizon_{horizon}_{model_name}: {metrics}")
+
+            if metrics["rmse"] < best_metrics["rmse"]:
+                best_name = model_name
+                best_metrics = metrics
+                best_model = model
+
+        if best_model is None:
+            raise RuntimeError(f"No model was successfully trained for horizon {horizon}.")
+
+        print(f"  Best for horizon {horizon}: {best_name} (RMSE={best_metrics['rmse']:.3f})")
+
+        horizon_models[horizon] = {
+            "framework": "sklearn",
+            "model": best_model,
+            "model_name": best_name,
+        }
+        horizon_metrics[horizon] = best_metrics
+
+    # Persist the feature column list from the last horizon (same for all horizons)
     model_dir = Path("artifacts") / "best_model"
     model_dir.mkdir(parents=True, exist_ok=True)
-    if isinstance(best_model, dict) and best_model.get("framework") == "tensorflow":
-        tf_dir = model_dir / "tensorflow_model"
-        best_model["model"].save(tf_dir)
-        joblib.dump(
-            {
-                "framework": "tensorflow",
-                "model_path": str(tf_dir),
-                "imputer": best_model["imputer"],
-                "scaler": best_model["scaler"],
-                "features": feature_cols,
-                "model_name": best_name,
-            },
-            model_dir / "model.joblib",
-        )
-    elif isinstance(best_model, dict) and best_model.get("framework") == "pytorch":
-        torch_path = model_dir / "torch_model.pt"
-        try:
-            import torch
-        except Exception as exc:
-            raise RuntimeError(f"PyTorch selected but unavailable during save: {exc}") from exc
-        torch.save(best_model["model"].state_dict(), torch_path)
-        joblib.dump(
-            {
-                "framework": "pytorch",
-                "model_state_path": str(torch_path),
-                "imputer": best_model["imputer"],
-                "scaler": best_model["scaler"],
-                "features": feature_cols,
-                "model_name": best_name,
-            },
-            model_dir / "model.joblib",
-        )
-    else:
-        joblib.dump(
-            {
-                "framework": "sklearn",
-                "model": best_model,
-                "features": feature_cols,
-                "model_name": best_name,
-            },
-            model_dir / "model.joblib",
-        )
+    joblib.dump(
+        {
+            "framework": "sklearn_horizons",
+            "horizon_models": horizon_models,
+            "features": feature_cols,
+            "model_name": "direct_horizon_models",
+        },
+        model_dir / "model.joblib",
+    )
 
+    flat_metrics = {
+        f"horizon_{horizon}_{metric}": value
+        for horizon, metrics in horizon_metrics.items()
+        for metric, value in metrics.items()
+    }
     register_model_artifact(
         model_dir=model_dir,
-        metrics=best_metrics,
-        model_type=best_name,
+        metrics=flat_metrics,
+        model_type="direct_horizon_models",
     )
-    print(f"Registered model '{best_name}' with metrics: {best_metrics}")
+    print(f"\nRegistered direct horizon models with metrics: {flat_metrics}")
 
 
 if __name__ == "__main__":

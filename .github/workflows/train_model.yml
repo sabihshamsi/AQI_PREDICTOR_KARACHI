@@ -1,8 +1,6 @@
-name: Train Model Daily
+name: Train Model Manual
 
 on:
-  schedule:
-    - cron: '0 0 * * *'  # Every day at midnight UTC
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
@@ -28,7 +26,7 @@ jobs:
         HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
         HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
         FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME || 'karachi_aqi_features' }}
-        FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '1' }}
+        FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '2' }}
         FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY || 'date' }}
         TARGET_COLUMN: ${{ secrets.TARGET_COLUMN || 'pm2_5' }}
         MODEL_NAME: ${{ secrets.MODEL_NAME || 'karachi_aqi_model' }}

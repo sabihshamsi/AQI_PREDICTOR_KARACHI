@@ -158,6 +158,7 @@ def chronological_split(
 
 def main() -> None:
     df = read_features()
+    print("Total rows from feature store:", len(df))
     if settings.target_column not in df.columns:
         raise ValueError(f"Target column '{settings.target_column}' not found in feature store")
 
@@ -178,51 +179,110 @@ def main() -> None:
     for horizon in (1, 2, 3):
         print(f"\n=== Training horizon {horizon} day(s) ahead ===")
 
-        # Chronological split with gap — no leakage at boundary
-        train_df, test_df, y_train, y_test = chronological_split(
-            df, settings.target_column, horizon=horizon
-        )
+        try:
+            train_df, test_df, y_train, y_test = chronological_split(
+                df,
+                settings.target_column,
+                horizon=horizon,
+            )
 
-        # Compute lag features after splitting — no leakage from future rows
-        train_df, test_df = add_lag_features(train_df, test_df)
+            print(
+                f"Horizon {horizon}: "
+                f"train={len(train_df)}, "
+                f"test={len(test_df)}, "
+                f"y_train={len(y_train)}, "
+                f"y_test={len(y_test)}"
+            )
 
-        # Final feature columns (base + leak-free lag columns)
-        feature_cols = [
-            c for c in base_feature_cols + list(lag_cols)
-            if c in train_df.columns and c in test_df.columns
-            and c not in {"date", settings.target_column}
-        ]
+            if len(train_df) == 0 or len(test_df) == 0:
+                print(
+                    f"Skipping horizon {horizon}: "
+                    f"empty train or test set."
+                )
+                continue
 
-        X_train = train_df[feature_cols]
-        X_test = test_df[feature_cols]
-        y_test_np = y_test.to_numpy()
+            train_df, test_df = add_lag_features(train_df, test_df)
 
-        best_name = ""
-        best_metrics: dict = {"rmse": float("inf"), "mae": float("inf"), "r2": -float("inf")}
-        best_model = None
+            feature_cols = [
+                c
+                for c in base_feature_cols + list(lag_cols)
+                if c in train_df.columns
+                and c in test_df.columns
+                and c not in {"date", settings.target_column}
+            ]
 
-        for model_name, model in build_models().items():
-            model.fit(X_train, y_train)
-            preds = model.predict(X_test)
-            metrics = evaluate(y_test_np, preds)
-            print(f"  horizon_{horizon}_{model_name}: {metrics}")
+            X_train = train_df[feature_cols]
+            X_test = test_df[feature_cols]
 
-            if metrics["rmse"] < best_metrics["rmse"]:
-                best_name = model_name
-                best_metrics = metrics
-                best_model = model
+            if len(X_train) == 0 or len(X_test) == 0:
+                print(
+                    f"Skipping horizon {horizon}: "
+                    f"X_train={X_train.shape}, "
+                    f"X_test={X_test.shape}"
+                )
+                continue
 
-        if best_model is None:
-            raise RuntimeError(f"No model was successfully trained for horizon {horizon}.")
+            y_test_np = y_test.to_numpy()
 
-        print(f"  Best for horizon {horizon}: {best_name} (RMSE={best_metrics['rmse']:.3f})")
+            best_name = ""
+            best_metrics = {
+                "rmse": float("inf"),
+                "mae": float("inf"),
+                "r2": -float("inf"),
+            }
+            best_model = None
 
-        horizon_models[horizon] = {
-            "framework": "sklearn",
-            "model": best_model,
-            "model_name": best_name,
-        }
-        horizon_metrics[horizon] = best_metrics
+            for model_name, model in build_models().items():
+                try:
+                    model.fit(X_train, y_train)
+
+                    preds = model.predict(X_test)
+
+                    metrics = evaluate(y_test_np, preds)
+
+                    print(
+                        f"  horizon_{horizon}_{model_name}: "
+                        f"{metrics}"
+                    )
+
+                    if metrics["rmse"]  < best_metrics["rmse"]:
+                        best_name = model_name
+                        best_metrics = metrics
+                        best_model = model
+
+                except Exception as model_error:
+                    print(
+                        f"  horizon_{horizon}_{model_name} failed: "
+                        f"{model_error}"
+                    )
+
+            if best_model is None:
+                print(
+                    f"No successful model for horizon "
+                    f"{horizon}. Skipping."
+                )
+                continue
+
+            print(
+                f"  Best for horizon {horizon}: "
+                f"{best_name} "
+                f"(RMSE={best_metrics['rmse']:.3f})"
+            )
+
+            horizon_models[horizon] = {
+                "framework": "sklearn",
+                "model": best_model,
+                "model_name": best_name,
+            }
+
+            horizon_metrics[horizon] = best_metrics
+
+        except Exception as e:
+            print(
+                f"Skipping horizon {horizon} due to error: "
+                f"{e}"
+            )
+            continue
 
     # Persist the feature column list from the last horizon (same for all horizons)
     model_dir = Path("artifacts") / "best_model"

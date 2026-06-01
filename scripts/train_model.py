@@ -153,6 +153,15 @@ def chronological_split(
     train = df.iloc[:train_end].copy()
     test = df.iloc[train_end + gap:].copy()
 
+    # Validate that the test set is not empty after applying the gap
+    if len(test) == 0:
+        raise ValueError(
+            f"Insufficient data for horizon={horizon}. "
+            f"After train/test split with gap={gap}, no test samples remain. "
+            f"Total samples: {n}, train_end: {train_end}, gap: {gap}. "
+            f"Consider reducing horizon or test_size."
+        )
+
     y_train = train.pop("_target")
     y_test = test.pop("_target")
 
@@ -180,6 +189,12 @@ def main() -> None:
 
     df = df.sort_values("date").reset_index(drop=True)
 
+    if len(df) < 30:
+        logger.warning(
+            "Dataset has only %d rows. This may be insufficient for horizons 1-3 with test_size=0.2.",
+            len(df),
+        )
+
     # Base feature columns (excluding date and the raw target).
     # Lag columns will be recomputed leak-free inside the loop.
     lag_cols = {"pm2_5_lag_1d", "pm2_5_change_1d", "pm2_5_pct_change_1d",
@@ -201,23 +216,29 @@ def main() -> None:
                 settings.target_column,
                 horizon=horizon,
             )
+        except ValueError as split_error:
+            logger.warning(f"Skipping horizon {horizon}: {split_error}")
+            continue
+        except Exception as e:
+            logger.exception(f"Error during split for horizon {horizon}: {e}")
+            continue
 
+        print(
+            f"Horizon {horizon}: "
+            f"train={len(train_df)}, "
+            f"test={len(test_df)}, "
+            f"y_train={len(y_train)}, "
+            f"y_test={len(y_test)}"
+        )
+
+        if len(train_df) == 0 or len(test_df) == 0:
             print(
-                f"Horizon {horizon}: "
-                f"train={len(train_df)}, "
-                f"test={len(test_df)}, "
-                f"y_train={len(y_train)}, "
-                f"y_test={len(y_test)}"
+                f"Skipping horizon {horizon}: "
+                f"empty train or test set."
             )
+            continue
 
-            if len(train_df) == 0 or len(test_df) == 0:
-                print(
-                    f"Skipping horizon {horizon}: "
-                    f"empty train or test set."
-                )
-                continue
-
-            train_df, test_df = add_lag_features(train_df, test_df)
+        train_df, test_df = add_lag_features(train_df, test_df)
 
             feature_cols = [
                 c

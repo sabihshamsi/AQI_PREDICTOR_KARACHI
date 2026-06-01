@@ -12,6 +12,7 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
+import logging
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -19,6 +20,8 @@ if str(ROOT_DIR) not in sys.path:
 
 from src.config import settings
 from src.hopsworks_utils import read_features, register_model_artifact
+
+logger = logging.getLogger(__name__)
 
 
 def build_models() -> dict[str, Pipeline]:
@@ -157,8 +160,21 @@ def chronological_split(
 
 
 def main() -> None:
-    df = read_features()
-    print("Total rows from feature store:", len(df))
+    logging.basicConfig(level=logging.INFO)
+
+    try:
+        df = read_features()
+    except Exception as e:
+        logger.exception("Failed to read features from Hopsworks: %s", e)
+        raise
+
+    logger.info("Retrieved %d rows from feature store", len(df))
+    logger.info("Features shape: %s", getattr(df, "shape", None))
+    logger.info("Columns: %s", getattr(df, "columns", None).tolist() if hasattr(df, "columns") else None)
+
+    if df.empty:
+        logger.error("Feature group returned empty dataset")
+        raise ValueError(f"No data retrieved from feature group. Expected at least 1 sample, got {len(df)}.")
     if settings.target_column not in df.columns:
         raise ValueError(f"Target column '{settings.target_column}' not found in feature store")
 

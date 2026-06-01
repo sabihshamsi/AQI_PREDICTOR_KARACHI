@@ -233,6 +233,7 @@ def main() -> None:
 
     horizon_models: dict = {}
     horizon_metrics: dict = {}
+    feature_cols = []  # Initialize before loop to avoid NameError if all horizons fail
 
     for horizon in (1, 2, 3):
         print(f"\n=== Training horizon {horizon} day(s) ahead ===")
@@ -340,6 +341,12 @@ def main() -> None:
         }
 
         horizon_metrics[horizon] = best_metrics
+
+    # Safety check: ensure at least one horizon trained successfully
+    if not horizon_models:
+        logger.error("No models trained successfully.")
+        return
+
     model_dir = Path("artifacts") / "best_model"
     model_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(

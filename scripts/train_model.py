@@ -97,12 +97,21 @@ def build_models() -> dict[str, Pipeline]:
     }
 
 
-def evaluate(y_true, y_pred) -> dict[str, float]:
+def evaluate(y_true, y_pred):
     rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
     mae = float(mean_absolute_error(y_true, y_pred))
-    r2 = float(r2_score(y_true, y_pred))
-    return {"rmse": rmse, "mae": mae, "r2": r2}
 
+    r2 = (
+        float(r2_score(y_true, y_pred))
+        if len(y_true) > 1
+        else 0.0
+    )
+
+    return {
+        "rmse": rmse,
+        "mae": mae,
+        "r2": r2,
+    }
 
 def add_lag_features(train_df: pd.DataFrame, test_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """

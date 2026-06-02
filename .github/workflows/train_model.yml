@@ -1,34 +1,32 @@
 name: Train Model Manual
 
 on:
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   train:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Run train model
-      env:
-        HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
-        HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
-        FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME || 'karachi_aqi_features' }}
-        FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '60' }}
-        FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY || 'date' }}
-        TARGET_COLUMN: ${{ secrets.TARGET_COLUMN || 'pm2_5' }}
-        MODEL_NAME: ${{ secrets.MODEL_NAME || 'karachi_aqi_model' }}
-        MODEL_VERSION: ${{ secrets.MODEL_VERSION || '1' }}
-      run: python scripts/train_model.py
+      - name: Train model
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME || 'karachi_aqi_features' }}
+          FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '60' }}
+          FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY || 'date' }}
+          TARGET_COLUMN: ${{ secrets.TARGET_COLUMN || 'pm2_5' }}
+          MODEL_NAME: ${{ secrets.MODEL_NAME || 'karachi_aqi_model' }}
+          MODEL_VERSION: ${{ secrets.MODEL_VERSION || '1' }}
+        run: |
+          python scripts/train_model.py

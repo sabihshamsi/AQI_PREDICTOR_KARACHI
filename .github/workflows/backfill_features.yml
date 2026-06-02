@@ -1,36 +1,35 @@
 name: Backfill Features Manual
 
 on:
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   backfill:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Run backfill features
-      env:
-        HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
-        HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
-        FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME || 'karachi_aqi_features' }}
-        FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '2' }}
-        FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY || 'date' }}
-        TARGET_COLUMN: ${{ secrets.TARGET_COLUMN || 'pm2_5' }}
-      run: |
-        # Run for the last 7 days to catch up
-        START_DATE=$(TZ=Asia/Karachi date -d '7 days ago' +%Y-%m-%d)
-        END_DATE=$(TZ=Asia/Karachi date +%Y-%m-%d)
-        python scripts/backfill_features.py --start-date $START_DATE --end-date $END_DATE
+      - name: Run backfill
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          FEATURE_GROUP_NAME: ${{ secrets.FEATURE_GROUP_NAME || 'karachi_aqi_features' }}
+          FEATURE_GROUP_VERSION: ${{ secrets.FEATURE_GROUP_VERSION || '60' }}
+          FEATURE_GROUP_PRIMARY_KEY: ${{ secrets.FEATURE_GROUP_PRIMARY_KEY || 'date' }}
+          TARGET_COLUMN: ${{ secrets.TARGET_COLUMN || 'pm2_5' }}
+        run: |
+          START_DATE=$(TZ=Asia/Karachi date -d '7 days ago' +%Y-%m-%d)
+          END_DATE=$(TZ=Asia/Karachi date +%Y-%m-%d)
+
+          python scripts/backfill_features.py \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE"

@@ -64,11 +64,10 @@ def _hourly_to_daily(payload: dict, variables: list[str]) -> pd.DataFrame:
     return daily
 
 
-def _weather_url(end_date: str) -> str:
-    today = pd.Timestamp.now(tz=KARACHI_TIMEZONE).date()
-    parsed_end = pd.to_datetime(end_date).date()
-    if parsed_end >= today:
-        return WEATHER_FORECAST_URL
+def _weather_url(start_date: str, end_date: str) -> str:
+    pd.to_datetime(start_date).date()
+    pd.to_datetime(end_date).date()
+    # Backfill and mixed historical ranges must not be sent to the forecast API.
     return WEATHER_ARCHIVE_URL
 
 
@@ -78,8 +77,9 @@ def add_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     features = df.sort_values("date").copy()
-    date = pd.to_datetime(features["date"])
-    features["date"] = date.dt.date
+    features["date"] = pd.to_datetime(features["date"])
+    date = features["date"]
+
     features["day_of_week"] = date.dt.dayofweek
     features["day_of_month"] = date.dt.day
     features["month"] = date.dt.month
@@ -116,7 +116,7 @@ def fetch_open_meteo(start_date: str, end_date: str) -> pd.DataFrame:
         {**base_params, "hourly": ",".join(AIR_QUALITY_VARIABLES)},
     )
     weather_payload = _get_json(
-        _weather_url(end_date),
+        _weather_url(start_date, end_date),
         {**base_params, "hourly": ",".join(WEATHER_VARIABLES)},
     )
 

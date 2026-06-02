@@ -33,9 +33,10 @@ def get_or_create_feature_group(feature_store):
     return feature_store.get_or_create_feature_group(
         name=settings.feature_group_name,
         version=settings.feature_group_version,
-        primary_key=[settings.feature_group_primary_key],
-        event_time=settings.feature_group_primary_key,
+        primary_key=["date"],
+        event_time="date",
         description="Karachi AQI features from Open-Meteo",
+        online_enabled=False,
     )
 
 
@@ -43,7 +44,13 @@ def insert_features(df: pd.DataFrame) -> None:
     project = login_to_hopsworks()
     fs = project.get_feature_store()
     fg = get_or_create_feature_group(fs)
-    fg.insert(df, write_options={"wait_for_job": True})
+    fg.insert(
+        df,
+        write_options={
+            "wait_for_job": True,
+            "overwrite": False,
+        },
+    )
 
 
 def read_features() -> pd.DataFrame:

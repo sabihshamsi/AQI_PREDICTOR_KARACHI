@@ -22,7 +22,9 @@ app = FastAPI(title="Karachi AQI Prediction API")
 
 # Reduced model TTL so a freshly trained daily model is picked up within 5 min
 MODEL_CACHE_TTL_SECONDS = 300
-FEATURE_CACHE_TTL_SECONDS = 3600
+# FIX (Bug 1): Was 3600. Must be shorter than the hourly pipeline cadence so the
+# API sees fresh feature-store data within the same hour it is written.
+FEATURE_CACHE_TTL_SECONDS = 300
 CURRENT_AQI_CACHE_TTL_SECONDS = 3600
 
 _model_cache: dict = {"expires_at": 0.0, "payload": None}
@@ -102,21 +104,37 @@ def read_features_cached() -> pd.DataFrame:
 
 def predict_for_date(
     model_payload: dict,
-    latest_features: pd.DataFrame,
+    df: pd.DataFrame,   # FIX (Bug 2): full sorted df, not just the last row
     horizon: int,
 ) -> float:
     """
-    Predict PM2.5 for a given forecast horizon using the latest feature row.
-    Only sklearn and sklearn_horizons frameworks are supported.
+    Predict PM2.5 for a given forecast horizon.
+
+    The model was trained with horizon-shifted targets: the Day-1 model saw
+    row[t] → target[t+1], the Day-2 model saw row[t] → target[t+2], etc.
+    At inference time we replicate that: for horizon=1 we feed the most recent
+    feature row (iloc[-1]); for horizon=2 we feed iloc[-2] so the lag features
+    carry the same relative offset seen during training; for horizon=3 iloc[-3].
+
+    This means each horizon gets a *different* input row — the one whose lag
+    window correctly corresponds to predicting that many days ahead — rather
+    than all three horizons receiving the identical last row.
     """
     feature_cols = model_payload["features"]
     framework = model_payload.get("framework", "sklearn")
 
-    missing = [c for c in feature_cols if c not in latest_features.columns]
+    missing = [c for c in feature_cols if c not in df.columns]
     if missing:
         raise ValueError(f"Feature store is missing model columns: {missing}")
 
-    X = latest_features[feature_cols].iloc[-1:].copy()
+    if len(df) == 0:
+        raise ValueError("Feature dataframe is empty")
+
+    # FIX: use explicit bounded indexing instead of negative slice ranges.
+    # If the feature store is small, clamp to the latest available row.
+    idx = len(df) - horizon
+    idx = max(0, min(idx, len(df) - 1))
+    X = df[feature_cols].iloc[[idx]].copy()
 
     if framework == "sklearn_horizons":
         horizon_models = model_payload["horizon_models"]
@@ -203,14 +221,13 @@ def predict_latest():
         )
 
     df = read_features_cached().sort_values("date")
-    latest = df.iloc[-1:]
     model_name = describe_model(payload)
     today = datetime.now(ZoneInfo(KARACHI_TIMEZONE)).date()
     predictions = []
 
     for days_ahead in range(1, 4):
         pred_date = today + timedelta(days=days_ahead)
-        pm25_pred = predict_for_date(payload, latest, horizon=days_ahead)
+        pm25_pred = predict_for_date(payload, df, horizon=days_ahead)  # FIX: pass full df
         aqi_info = calculate_aqi(pm25_pred)
         predictions.append({
             "date": str(pred_date),
@@ -225,7 +242,7 @@ def predict_latest():
     return {
         "model_name": model_name,
         "model_version": payload["model_version"],
-        "prediction_feature_date": str(latest["date"].iloc[0]),
+        "prediction_feature_date": str(df["date"].iloc[-1]),  # FIX: use df directly
         "used_open_meteo_current": used_open_meteo_current,
         "predictions": predictions,
         "latest_actual": latest_actual,

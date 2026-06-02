@@ -344,49 +344,6 @@ try:
 except Exception as exc:
     st.error(f"Could not fetch 90-day history: {exc}")
 
-
-# ---------------------------------------------------------------------------
-# Section 4 — SHAP feature importance
-# ---------------------------------------------------------------------------
-
-st.divider()
-st.subheader("Feature Importance (SHAP)")
-st.caption("Mean absolute SHAP values for the best model at each forecast horizon.")
-
-try:
-    import plotly.graph_objects as go
-    shap_data = call_api("/shap-importance")
-
-    for horizon_key, importance_dict in shap_data.items():
-        if not importance_dict or "error" in importance_dict:
-            continue
-        horizon_label = horizon_key.replace("_", " ").capitalize()
-        pairs = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)[:15]
-        feats, vals = zip(*pairs)
-
-        fig_shap = go.Figure(go.Bar(
-            x=list(vals), y=list(feats),
-            orientation="h",
-            marker_color="#378ADD",
-        ))
-        fig_shap.update_layout(
-            title=f"SHAP Feature Importance — {horizon_label}",
-            xaxis_title="Mean |SHAP value|",
-            yaxis=dict(autorange="reversed"),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            height=400,
-            margin=dict(l=160),
-        )
-        st.plotly_chart(fig_shap, use_container_width=True)
-
-except Exception as exc:
-    st.info(
-        f"SHAP endpoint not available ({exc}). "
-        "Add `shap` to requirements.txt and ensure /shap-importance is in api.py."
-    )
-
-
 # ---------------------------------------------------------------------------
 # Section 5 — Model info + AQI scale reference
 # ---------------------------------------------------------------------------

@@ -249,21 +249,7 @@ def predict_latest():
     }
 
 
-@app.get("/shap-importance")
-def shap_importance():
-    """
-    Return mean absolute SHAP values per feature for each forecast horizon.
-    Uses the training data from the feature store as the background dataset.
-    Only works with tree-based models (RandomForest) — Ridge and MLP fall back
-    to permutation importance via sklearn.
-    """
-    try:
-        import shap
-    except ImportError:
-        raise HTTPException(
-            status_code=501,
-            detail="shap package not installed. Run: pip install shap",
-        )
+
 
     payload = load_latest_registered_model()
     if payload.get("framework") != "sklearn_horizons":

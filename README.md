@@ -4,9 +4,9 @@ A fully automated machine learning system that predicts Karachi's Air Quality In
 
 ## 🚀 Live Demo
 
-- Dashboard: https://your-streamlit-app.streamlit.app
-- API: https://your-huggingface-space.hf.space
-- API Docs: https://your-huggingface-space.hf.space/docs
+- Dashboard: [https://your-streamlit-app.streamlit.app](https://aqipredictorkarachi-4gwrl3ccmh5jcstmoj3uhe.streamlit.app/)
+- API:[ https://your-huggingface-space.hf.space](https://sabihshasmi50-karachi-aqi-predictor.hf.space)
+-
 
 ---
 
